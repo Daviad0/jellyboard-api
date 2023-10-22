@@ -63,6 +63,18 @@ function generateCode(){
     return code;
 }
 
+function generateUniqId(){
+    // random 8 char id
+    var id = "";
+    while(id == ""){
+        id = "";
+        for(var i = 0; i < 8; i++){
+            id += String.fromCharCode(65 + Math.floor(Math.random() * 26));
+        }
+        id = id.toUpperCase();
+    }
+}
+
 
 io.on('connection', (socket) => {
     socket.on('ping', (data) => {
@@ -74,28 +86,92 @@ io.on('connection', (socket) => {
         
         const code = generateCode();
         activeSessions.push({
-            code,
+            code: code,
             aliveUntil: new Date(),
             players: [],
             stateData: {
                 started: false,
                 currentSlide: {}
             },
-            hostSocket: socket
+            hostSocket: socket,
+            slides: []
         });
         socket.emit("host_create_session", { valid: true, code });
 
     });
 
+    socket.on("host_control_session", (data) => {
+        const {code} = data;
+        const applicableSession = activeSessions.filter(session => session.code.toUpperCase() == code.toUpperCase());
+        if(applicableSession.length == 0){
+            socket.emit("host_control_session", {valid: false});
+            return;
+        }
+        const session = applicableSession[0];
+        session.aliveUntil = new Date();
+        session.hostSocket = socket;
+        socket.emit("host_control_session", {valid: true, stateData: session.stateData, slides: session.slides, players: session.players, code: code.toUpperCase()});
+    })
+
+    socket.on("host_update_state", (data) => {
+        const {code, stateData} = data;
+        const applicableSession = activeSessions.filter(session => session.code.toUpperCase() == code.toUpperCase());
+        if(applicableSession.length == 0){
+            return;
+        }
+        const session = applicableSession[0];
+        session.aliveUntil = new Date();
+        session.stateData = stateData;
+        session.hostSocket.emit("host_update_state", {valid: true, stateData});
+    
+
+        io.to(code.toUpperCase()).emit("game_update_state", {valid: true, stateData});
+    })
+
+    socket.on("game_ping", (data) => {
+        var code = socket.nickname.split("@")[1];
+        const applicableSession = activeSessions.filter(session => session.code.toUpperCase() == code.toUpperCase());
+        if(applicableSession.length == 0){
+            return;
+        
+        }
+
+        const session = applicableSession[0];
+
+        socket.emit("game_update_state", {valid: true, stateData: session.stateData});
+    })
+
+    socket.on("host_add_slide", (data) => {
+        const {code, slide} = data;
+        const applicableSession = activeSessions.filter(session => session.code.toUpperCase() == code.toUpperCase());
+        if(applicableSession.length == 0){
+            socket.emit("host_add_slide", {valid: false});
+            return;
+        }
+        const session = applicableSession[0];
+        session.aliveUntil = new Date();
+
+        slide.id = generateUniqId();
+        slide.submissions = [];
+
+
+        session.slides.push(slide);
+        
+        session.hostSocket.emit("host_add_slide", {valid: true, slide});
+    
+    })
+
+
+
 
 
     socket.on('home_verify_code', (data) => {
         const {code} = data;
-        const applicableSession = activeSessions.filter(session => session.code == code);
-        if(applicableSession.length == 0 && false){
+        const applicableSession = activeSessions.filter(session => session.code.toUpperCase() == code.toUpperCase());
+        if(applicableSession.length == 0){
             socket.emit('home_verify_code', {valid: false});
         }else{
-            socket.emit('home_verify_code', {valid: true, code});
+            socket.emit('home_verify_code', {valid: true, code: code.toUpperCase()});
         }
     });
     socket.on('home_join', (data) => {
@@ -113,10 +189,37 @@ io.on('connection', (socket) => {
                 username,
                 lastSeen: new Date()
             });
+            session.hostSocket.emit("host_update_players", {players: session.players});
             socket.nickname = username + "@" + code;
+            socket.join(code.toUpperCase());
             socket.emit('home_join', {valid: true, stateData: session.stateData, code, username});
         }
     });
+    socket.on('home_join_override', (data) => {
+        const {code, username} = data;
+        const applicableSession = activeSessions.filter(session => session.code == code);
+        if(applicableSession.length == 0){
+            return;
+        }
+        const session = applicableSession[0];
+        socket.nickname = username + "@" + code;
+        socket.join(code.toUpperCase());
+        socket.emit('home_join', {valid: true, stateData: session.stateData, code, username});
+    })
+
+    socket.on('home_game_exists', (data) => {
+        const {code, username} = data;
+        const applicableSession = activeSessions.filter(session => session.code == code);
+        if(applicableSession.length == 0){
+            socket.emit('home_game_exists', {valid: false});
+        }
+        const session = applicableSession[0];
+        if(session.players.filter(player => player.username == username).length > 0){
+            socket.emit('home_game_exists', {valid: true, code, username});
+            return;
+        }
+        socket.emit('home_game_exists', {valid: false});
+    })
 
 
 });
@@ -127,12 +230,14 @@ var activeSessions = [];
 /*
 {
     code: String (id),
-    board: String (id)
     aliveUntil: Date,
     players: [{
         username: String,
         lastSeen: Date
     }],
+    slides: [{
+        id: String,
+    }]
     stateData: Object,
     hostSocket: Socket
 }
