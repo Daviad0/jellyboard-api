@@ -73,6 +73,7 @@ function generateUniqId(){
         }
         id = id.toUpperCase();
     }
+    return id;
 }
 
 
@@ -91,6 +92,11 @@ io.on('connection', (socket) => {
             players: [],
             stateData: {
                 started: false,
+                interaction: {
+                    canRespond: true,
+                    type: "submission"
+                },
+                answers: {},
                 currentSlide: {}
             },
             hostSocket: socket,
@@ -115,30 +121,62 @@ io.on('connection', (socket) => {
 
     socket.on("host_update_state", (data) => {
         const {code, stateData} = data;
+        if(code == undefined || stateData == undefined){
+            return;
+        }
         const applicableSession = activeSessions.filter(session => session.code.toUpperCase() == code.toUpperCase());
         if(applicableSession.length == 0){
             return;
         }
         const session = applicableSession[0];
         session.aliveUntil = new Date();
+        var resendAnswer = false;
+        if(stateData.currentSlide.id != session.stateData.currentSlide.id){
+            resendAnswer = true;
+        }
         session.stateData = stateData;
         session.hostSocket.emit("host_update_state", {valid: true, stateData});
     
 
-        io.to(code.toUpperCase()).emit("game_update_state", {valid: true, stateData});
+        io.to(code.toUpperCase()).emit("game_update_state", {valid: true, stateData, resendAnswer});
+
+        
     })
 
-    socket.on("game_ping", (data) => {
+    socket.on("game_my_answer", (data) => {
+        if(socket.nickname == undefined){
+            return;
+        }
         var code = socket.nickname.split("@")[1];
+        var username = socket.nickname.split("@")[0];
         const applicableSession = activeSessions.filter(session => session.code.toUpperCase() == code.toUpperCase());
         if(applicableSession.length == 0){
             return;
-        
         }
-
         const session = applicableSession[0];
+        var previousAnswer = session.stateData.answers[username];
+        console.log(previousAnswer);
+        if(previousAnswer != undefined){
+            socket.emit("game_your_answer", {valid: true, answer: previousAnswer});
+        }
+    })
 
-        socket.emit("game_update_state", {valid: true, stateData: session.stateData});
+    socket.on("game_ping", (data) => {
+        try{
+            var code = socket.nickname.split("@")[1];
+            const applicableSession = activeSessions.filter(session => session.code.toUpperCase() == code.toUpperCase());
+            if(applicableSession.length == 0){
+                return;
+            
+            }
+
+            const session = applicableSession[0];
+
+            socket.emit("game_update_state", {valid: true, stateData: session.stateData});
+        }catch(e){
+
+        }
+        
     })
 
     socket.on("host_add_slide", (data) => {
@@ -212,6 +250,7 @@ io.on('connection', (socket) => {
         const applicableSession = activeSessions.filter(session => session.code == code);
         if(applicableSession.length == 0){
             socket.emit('home_game_exists', {valid: false});
+            return;
         }
         const session = applicableSession[0];
         if(session.players.filter(player => player.username == username).length > 0){
@@ -219,6 +258,29 @@ io.on('connection', (socket) => {
             return;
         }
         socket.emit('home_game_exists', {valid: false});
+    });
+
+    socket.on('game_submit_answer', (data) => {
+        const {answer} = data;
+        if(socket.nickname == undefined){
+            return;
+        }
+        var code = socket.nickname.split("@")[1];
+        var username = socket.nickname.split("@")[0];
+        const applicableSession = activeSessions.filter(session => session.code.toUpperCase() == code.toUpperCase());
+        if(applicableSession.length == 0){
+            return;
+        }
+        const session = applicableSession[0];
+        if(!session.stateData.interaction.canRespond){
+            return;
+        }
+        if(answer.includes("data:image") && session.stateData.currentSlide.type != "image")
+            return;
+        session.stateData.answers[username] = answer;
+
+
+        session.hostSocket.emit("host_update_answers", {valid: true, answers: session.stateData.answers});
     })
 
 
