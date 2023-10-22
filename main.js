@@ -275,8 +275,13 @@ io.on('connection', (socket) => {
         if(!session.stateData.interaction.canRespond){
             return;
         }
-        if(answer.includes("data:image") && session.stateData.currentSlide.type != "drawing")
-            return;
+        try{
+            if(answer.includes("data:image") && session.stateData.currentSlide.type != "drawing")
+                return;
+        }catch(e){
+
+        }
+        
         session.stateData.answers[username] = answer;
 
 
