@@ -7,7 +7,7 @@ const io = new Server(server, {
     cors: {
         methods: ["GET", "POST"],
         credentials: true,
-        origin: ["https://jellyboard.tech", "http://jellyboard.tech", "http://localhost:5173"]
+        origin: "http://localhost:5173"
     },
     allowEIO3: true,
     path: "/live"
