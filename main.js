@@ -4,11 +4,13 @@ const http = require('http');
 const server = http.createServer(app);
 const { Server } = require("socket.io");
 const io = new Server(server, {
-    path: '/live',
     cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
-      }
+        methods: ["GET", "POST"],
+        credentials: true,
+        origin: "http://localhost:5173"
+    },
+    allowEIO3: true,
+    path: "/live"
 });
 const cookieParser = require('cookie-parser');
 const mongoose = require('mongoose');
@@ -33,6 +35,8 @@ const boardSchema = new mongoose.Schema({
     createdAt: Date,
     slides: [{
         title: String,
+        id: String,
+        type: String,     
         data: Object,
         usageHistory: Object
     }],
@@ -49,7 +53,7 @@ app.use(cookieParser());
 function generateCode(){
     // gen 5 letter code
     var code = "";
-    while(applicableSession.filter(session => session.code == code).length == 0 && code != ""){
+    while(activeSessions.filter(session => session.code == code).length == 0 && code == ""){
         code = "";
         for(var i = 0; i < 5; i++){
             code += String.fromCharCode(65 + Math.floor(Math.random() * 26));
@@ -62,50 +66,47 @@ function generateCode(){
 
 io.on('connection', (socket) => {
     socket.on('ping', (data) => {
-        socket.emit('home:active_sessions', activeSessions.length);
+        socket.emit('home_active_sessions', activeSessions.length);
     });
 
-    socket.on("host:create_session", (data) => {
-        const { board, stateData } = data;
-
-        var applicableBoard = Board.find({ _id: board });
-        if (applicableBoard.length == 0) {
-            socket.emit("host:create_session", { valid: false, error: "Board not found" });
-            return;
-        }
-        applicableBoard = applicableBoard[0];
-
+    socket.on("host_create_session", (data) => {
+        
+        
         const code = generateCode();
         activeSessions.push({
             code,
-            applicableBoard,
             aliveUntil: new Date(),
             players: [],
-            stateData: {}
+            stateData: {
+                started: false,
+                currentSlide: {}
+            },
+            hostSocket: socket
         });
-        socket.emit("host:create_session", { code });
+        socket.emit("host_create_session", { valid: true, code });
+
     });
 
 
 
-    socket.on('home:verify_code', (data) => {
+    socket.on('home_verify_code', (data) => {
         const {code} = data;
         const applicableSession = activeSessions.filter(session => session.code == code);
-        if(applicableSession.length == 0){
-            socket.emit('home:verify_code', {valid: false});
+        if(applicableSession.length == 0 && false){
+            socket.emit('home_verify_code', {valid: false});
         }else{
-            socket.emit('home:verify_code', {valid: true});
+            socket.emit('home_verify_code', {valid: true, code});
         }
     });
-    socket.on('home:join', (data) => {
+    socket.on('home_join', (data) => {
         const {code, username} = data;
         const applicableSession = activeSessions.filter(session => session.code == code);
         if(applicableSession.length == 0){
-            socket.emit('home:verify_code', {valid: false});
+            socket.emit('home_verify_code', {valid: false});
         }else{
             const session = applicableSession[0];
             if(session.players.filter(player => player.username == username).length > 0){
-                socket.emit('home:join', {valid: false, message: "Username already taken!"});
+                socket.emit('home_join', {valid: false, message: "Username already taken!"});
                 return;
             }
             session.players.push({
@@ -113,7 +114,7 @@ io.on('connection', (socket) => {
                 lastSeen: new Date()
             });
             socket.nickname = username + "@" + code;
-            socket.emit('home:join', {valid: true, stateData: session.stateData});
+            socket.emit('home_join', {valid: true, stateData: session.stateData, code, username});
         }
     });
 
@@ -132,7 +133,8 @@ var activeSessions = [];
         username: String,
         lastSeen: Date
     }],
-    stateData: Object
+    stateData: Object,
+    hostSocket: Socket
 }
 
 
